@@ -618,6 +618,7 @@ async function main() {
                     const from = headers.find(h => h.name?.toLowerCase() === 'from')?.value || '';
                     const to = headers.find(h => h.name?.toLowerCase() === 'to')?.value || '';
                     const date = headers.find(h => h.name?.toLowerCase() === 'date')?.value || '';
+                    const messageId = headers.find(h => h.name?.toLowerCase() === 'message-id')?.value || '';
                     const threadId = response.data.threadId || '';
 
                     // Extract email content using the recursive function
@@ -664,7 +665,7 @@ async function main() {
                         content: [
                             {
                                 type: "text",
-                                text: `Thread ID: ${threadId}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}\nDate: ${date}\n\n${contentTypeNote}${body}${attachmentInfo}`,
+                                text: `Thread ID: ${threadId}\nMessage-ID: ${messageId}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}\nDate: ${date}\n\n${contentTypeNote}${body}${attachmentInfo}`,
                             },
                         ],
                     };

@@ -234,6 +234,18 @@ Multipart Email Example (HTML + Plain Text):
 }
 ```
 
+**Threaded Reply Example:**
+To create a proper reply that appears in the conversation thread, use both `threadId` and `inReplyTo` (obtained from `read_email`):
+```json
+{
+  "to": ["recipient@example.com"],
+  "subject": "Re: Meeting Tomorrow",
+  "body": "Thanks for the reminder! I'll be there.\n\nBest regards",
+  "threadId": "18abc123def456",
+  "inReplyTo": "<CABcD1E2FgH3IjK4LmN5OpQ6RsT7UvW8XyZ9@mail.gmail.com>"
+}
+```
+
 ### 2. Draft Email (`draft_email`)
 Creates a draft email without sending it. **Also supports attachments**.
 
@@ -256,8 +268,10 @@ Retrieves the content of a specific email by its ID. **Now shows enhanced attach
 }
 ```
 
-**Enhanced Response includes attachment details:**
+**Enhanced Response includes attachment details and threading information:**
 ```
+Thread ID: 18abc123def456
+Message-ID: <CABcD1E2FgH3IjK4LmN5OpQ6RsT7UvW8XyZ9@mail.gmail.com>
 Subject: Project Files
 From: sender@example.com
 To: recipient@example.com
@@ -269,6 +283,8 @@ Attachments (2):
 - document.pdf (application/pdf, 245 KB, ID: ANGjdJ9fkTs-i3GCQo5o97f_itG...)
 - spreadsheet.xlsx (application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, 89 KB, ID: BWHkeL8gkUt-j4HDRp6o98g_juI...)
 ```
+
+**Note**: The `Thread ID` and `Message-ID` are essential for creating threaded replies. Use these values when drafting or sending replies to maintain conversation threading.
 
 ### 4. **Download Attachment (`download_attachment`)**
 **NEW**: Downloads email attachments to your local filesystem.
