@@ -199,6 +199,17 @@ Basic Email:
 }
 ```
 
+**Send from a Verified Alias:**
+```json
+{
+  "from": "alias@yourdomain.com",
+  "to": ["recipient@example.com"],
+  "subject": "Message from my alias",
+  "body": "This email is sent from my verified alias address."
+}
+```
+> **Note:** The `from` address must be a verified send-as alias configured in your Gmail settings. If not specified, the email will be sent from your primary Gmail address.
+
 **Email with Attachments:**
 ```json
 {

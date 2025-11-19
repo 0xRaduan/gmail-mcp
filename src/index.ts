@@ -197,6 +197,7 @@ const SendEmailSchema = z.object({
     body: z.string().describe("Email body content (used for text/plain or when htmlBody not provided)"),
     htmlBody: z.string().optional().describe("HTML version of the email body"),
     mimeType: z.enum(['text/plain', 'text/html', 'multipart/alternative']).optional().default('text/plain').describe("Email content type"),
+    from: z.string().optional().describe("Email address to send from (must be a verified alias). If not specified, uses the authenticated user's primary email"),
     cc: z.array(z.string()).optional().describe("List of CC recipients"),
     bcc: z.array(z.string()).optional().describe("List of BCC recipients"),
     threadId: z.string().optional().describe("Thread ID to reply to"),
