@@ -19,13 +19,13 @@ import os from 'os';
 import {createEmailMessage, createEmailWithNodemailer} from "./utl.js";
 import { createLabel, updateLabel, deleteLabel, listLabels, findLabelByName, getOrCreateLabel, GmailLabel } from "./label-manager.js";
 import { createFilter, listFilters, getFilter, deleteFilter, filterTemplates, GmailFilterCriteria, GmailFilterAction } from "./filter-manager.js";
+import { AccountManager } from "./account-manager.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Configuration paths
 const CONFIG_DIR = path.join(os.homedir(), '.gmail-mcp');
 const OAUTH_PATH = process.env.GMAIL_OAUTH_PATH || path.join(CONFIG_DIR, 'gcp-oauth.keys.json');
-const CREDENTIALS_PATH = process.env.GMAIL_CREDENTIALS_PATH || path.join(CONFIG_DIR, 'credentials.json');
 
 // Type definitions for Gmail API responses
 interface GmailMessagePart {
@@ -56,8 +56,8 @@ interface EmailContent {
     html: string;
 }
 
-// OAuth2 configuration
-let oauth2Client: OAuth2Client;
+// Account manager instance
+let accountManager: AccountManager;
 
 /**
  * Recursively extract email body content from MIME message parts
@@ -93,16 +93,15 @@ function extractEmailContent(messagePart: GmailMessagePart): EmailContent {
     return { text: textContent, html: htmlContent };
 }
 
-async function loadCredentials() {
+async function initializeAccountManager() {
     try {
         // Create config directory if it doesn't exist
-        if (!process.env.GMAIL_OAUTH_PATH && !CREDENTIALS_PATH &&!fs.existsSync(CONFIG_DIR)) {
+        if (!fs.existsSync(CONFIG_DIR)) {
             fs.mkdirSync(CONFIG_DIR, { recursive: true });
         }
 
         // Check for OAuth keys in current directory first, then in config directory
         const localOAuthPath = path.join(process.cwd(), 'gcp-oauth.keys.json');
-        let oauthPath = OAUTH_PATH;
 
         if (fs.existsSync(localOAuthPath)) {
             // If found in current directory, copy to config directory
@@ -115,47 +114,32 @@ async function loadCredentials() {
             process.exit(1);
         }
 
-        const keysContent = JSON.parse(fs.readFileSync(OAUTH_PATH, 'utf8'));
-        const keys = keysContent.installed || keysContent.web;
-
-        if (!keys) {
-            console.error('Error: Invalid OAuth keys file format. File should contain either "installed" or "web" credentials.');
-            process.exit(1);
-        }
-
-        const callback = process.argv[2] === 'auth' && process.argv[3] 
-        ? process.argv[3] 
-        : "http://localhost:3000/oauth2callback";
-
-        oauth2Client = new OAuth2Client(
-            keys.client_id,
-            keys.client_secret,
-            callback
-        );
-
-        if (fs.existsSync(CREDENTIALS_PATH)) {
-            const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, 'utf8'));
-            oauth2Client.setCredentials(credentials);
-        }
+        // Initialize account manager
+        accountManager = new AccountManager();
+        await accountManager.initializeOAuth2Config(OAUTH_PATH);
     } catch (error) {
-        console.error('Error loading credentials:', error);
+        console.error('Error initializing account manager:', error);
         process.exit(1);
     }
 }
 
-async function authenticate() {
+async function authenticateAccount(email?: string, alias?: string) {
     const server = http.createServer();
     server.listen(3000);
 
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<string>((resolve, reject) => {
+        const oauth2Client = accountManager.createAuthClient();
+
         const authUrl = oauth2Client.generateAuthUrl({
             access_type: 'offline',
+            prompt: 'consent', // Force consent screen to get refresh token
             scope: [
                 'https://www.googleapis.com/auth/gmail.modify',
                 'https://www.googleapis.com/auth/gmail.settings.basic'
             ],
         });
 
+        console.log(`\nAuthenticating${email ? ` account: ${email}` : ' new account'}${alias ? ` (alias: ${alias})` : ''}`);
         console.log('Please visit this URL to authenticate:', authUrl);
         open(authUrl);
 
@@ -174,13 +158,20 @@ async function authenticate() {
 
             try {
                 const { tokens } = await oauth2Client.getToken(code);
-                oauth2Client.setCredentials(tokens);
-                fs.writeFileSync(CREDENTIALS_PATH, JSON.stringify(tokens));
+
+                // Complete authentication and get actual email
+                const actualEmail = await accountManager.completeAuthentication(
+                    oauth2Client,
+                    tokens,
+                    alias
+                );
 
                 res.writeHead(200);
-                res.end('Authentication successful! You can close this window.');
+                res.end(`Authentication successful for ${actualEmail}! You can close this window.`);
                 server.close();
-                resolve();
+
+                console.log(`\n✓ Account authenticated: ${actualEmail}${alias ? ` (alias: ${alias})` : ''}`);
+                resolve(actualEmail);
             } catch (error) {
                 res.writeHead(500);
                 res.end('Authentication failed');
@@ -191,7 +182,12 @@ async function authenticate() {
 }
 
 // Schema definitions
-const SendEmailSchema = z.object({
+// Base schema with optional account parameter
+const AccountBaseSchema = z.object({
+    account: z.string().optional().describe("Email address or alias of the account to use. If not specified, uses the active account."),
+});
+
+const SendEmailSchema = AccountBaseSchema.extend({
     to: z.array(z.string()).describe("List of recipient email addresses"),
     subject: z.string().describe("Email subject"),
     body: z.string().describe("Email body content (used for text/plain or when htmlBody not provided)"),
@@ -205,69 +201,69 @@ const SendEmailSchema = z.object({
     attachments: z.array(z.string()).optional().describe("List of file paths to attach to the email"),
 });
 
-const ReadEmailSchema = z.object({
+const ReadEmailSchema = AccountBaseSchema.extend({
     messageId: z.string().describe("ID of the email message to retrieve"),
 });
 
-const SearchEmailsSchema = z.object({
+const SearchEmailsSchema = AccountBaseSchema.extend({
     query: z.string().describe("Gmail search query (e.g., 'from:example@gmail.com')"),
     maxResults: z.number().optional().describe("Maximum number of results to return"),
 });
 
 // Updated schema to include removeLabelIds
-const ModifyEmailSchema = z.object({
+const ModifyEmailSchema = AccountBaseSchema.extend({
     messageId: z.string().describe("ID of the email message to modify"),
     labelIds: z.array(z.string()).optional().describe("List of label IDs to apply"),
     addLabelIds: z.array(z.string()).optional().describe("List of label IDs to add to the message"),
     removeLabelIds: z.array(z.string()).optional().describe("List of label IDs to remove from the message"),
 });
 
-const DeleteEmailSchema = z.object({
+const DeleteEmailSchema = AccountBaseSchema.extend({
     messageId: z.string().describe("ID of the email message to delete"),
 });
 
 // New schema for listing email labels
-const ListEmailLabelsSchema = z.object({}).describe("Retrieves all available Gmail labels");
+const ListEmailLabelsSchema = AccountBaseSchema.extend({}).describe("Retrieves all available Gmail labels");
 
 // Label management schemas
-const CreateLabelSchema = z.object({
+const CreateLabelSchema = AccountBaseSchema.extend({
     name: z.string().describe("Name for the new label"),
     messageListVisibility: z.enum(['show', 'hide']).optional().describe("Whether to show or hide the label in the message list"),
     labelListVisibility: z.enum(['labelShow', 'labelShowIfUnread', 'labelHide']).optional().describe("Visibility of the label in the label list"),
 }).describe("Creates a new Gmail label");
 
-const UpdateLabelSchema = z.object({
+const UpdateLabelSchema = AccountBaseSchema.extend({
     id: z.string().describe("ID of the label to update"),
     name: z.string().optional().describe("New name for the label"),
     messageListVisibility: z.enum(['show', 'hide']).optional().describe("Whether to show or hide the label in the message list"),
     labelListVisibility: z.enum(['labelShow', 'labelShowIfUnread', 'labelHide']).optional().describe("Visibility of the label in the label list"),
 }).describe("Updates an existing Gmail label");
 
-const DeleteLabelSchema = z.object({
+const DeleteLabelSchema = AccountBaseSchema.extend({
     id: z.string().describe("ID of the label to delete"),
 }).describe("Deletes a Gmail label");
 
-const GetOrCreateLabelSchema = z.object({
+const GetOrCreateLabelSchema = AccountBaseSchema.extend({
     name: z.string().describe("Name of the label to get or create"),
     messageListVisibility: z.enum(['show', 'hide']).optional().describe("Whether to show or hide the label in the message list"),
     labelListVisibility: z.enum(['labelShow', 'labelShowIfUnread', 'labelHide']).optional().describe("Visibility of the label in the label list"),
 }).describe("Gets an existing label by name or creates it if it doesn't exist");
 
 // Schemas for batch operations
-const BatchModifyEmailsSchema = z.object({
+const BatchModifyEmailsSchema = AccountBaseSchema.extend({
     messageIds: z.array(z.string()).describe("List of message IDs to modify"),
     addLabelIds: z.array(z.string()).optional().describe("List of label IDs to add to all messages"),
     removeLabelIds: z.array(z.string()).optional().describe("List of label IDs to remove from all messages"),
     batchSize: z.number().optional().default(50).describe("Number of messages to process in each batch (default: 50)"),
 });
 
-const BatchDeleteEmailsSchema = z.object({
+const BatchDeleteEmailsSchema = AccountBaseSchema.extend({
     messageIds: z.array(z.string()).describe("List of message IDs to delete"),
     batchSize: z.number().optional().default(50).describe("Number of messages to process in each batch (default: 50)"),
 });
 
 // Filter management schemas
-const CreateFilterSchema = z.object({
+const CreateFilterSchema = AccountBaseSchema.extend({
     criteria: z.object({
         from: z.string().optional().describe("Sender email address to match"),
         to: z.string().optional().describe("Recipient email address to match"),
@@ -286,17 +282,17 @@ const CreateFilterSchema = z.object({
     }).describe("Actions to perform on matching emails")
 }).describe("Creates a new Gmail filter");
 
-const ListFiltersSchema = z.object({}).describe("Retrieves all Gmail filters");
+const ListFiltersSchema = AccountBaseSchema.extend({}).describe("Retrieves all Gmail filters");
 
-const GetFilterSchema = z.object({
+const GetFilterSchema = AccountBaseSchema.extend({
     filterId: z.string().describe("ID of the filter to retrieve")
 }).describe("Gets details of a specific Gmail filter");
 
-const DeleteFilterSchema = z.object({
+const DeleteFilterSchema = AccountBaseSchema.extend({
     filterId: z.string().describe("ID of the filter to delete")
 }).describe("Deletes a Gmail filter");
 
-const CreateFilterFromTemplateSchema = z.object({
+const CreateFilterFromTemplateSchema = AccountBaseSchema.extend({
     template: z.enum(['fromSender', 'withSubject', 'withAttachments', 'largeEmails', 'containingText', 'mailingList']).describe("Pre-defined filter template to use"),
     parameters: z.object({
         senderEmail: z.string().optional().describe("Sender email (for fromSender template)"),
@@ -311,26 +307,52 @@ const CreateFilterFromTemplateSchema = z.object({
     }).describe("Template-specific parameters")
 }).describe("Creates a filter using a pre-defined template");
 
-const DownloadAttachmentSchema = z.object({
+const DownloadAttachmentSchema = AccountBaseSchema.extend({
     messageId: z.string().describe("ID of the email message containing the attachment"),
     attachmentId: z.string().describe("ID of the attachment to download"),
     filename: z.string().optional().describe("Filename to save the attachment as (if not provided, uses original filename)"),
     savePath: z.string().optional().describe("Directory path to save the attachment (defaults to current directory)"),
 });
 
+// Account management schemas
+const ListAccountsSchema = z.object({}).describe("Lists all authenticated Gmail accounts");
+
+const SwitchAccountSchema = z.object({
+    account: z.string().describe("Email address or alias of the account to switch to"),
+}).describe("Switches the active Gmail account");
+
+const GetActiveAccountSchema = z.object({}).describe("Gets the currently active Gmail account");
+
+const RemoveAccountSchema = z.object({
+    account: z.string().describe("Email address or alias of the account to remove"),
+}).describe("Removes a Gmail account and deletes its credentials");
+
+const SetAccountAliasSchema = z.object({
+    account: z.string().describe("Email address or current alias of the account"),
+    alias: z.string().describe("New alias to set for this account"),
+}).describe("Sets or updates an alias for a Gmail account");
+
 
 // Main function
 async function main() {
-    await loadCredentials();
+    await initializeAccountManager();
 
+    // Handle CLI auth command: npm start auth [alias]
+    // The first argument after 'auth' is treated as the alias
     if (process.argv[2] === 'auth') {
-        await authenticate();
-        console.log('Authentication completed successfully');
+        const alias = process.argv[3] && process.argv[3] !== '' ? process.argv[3] : undefined; // Optional alias
+
+        await authenticateAccount(undefined, alias);
+
+        // List all accounts after auth
+        const accounts = accountManager.listAccounts();
+        console.log('\nAuthenticated accounts:');
+        accounts.forEach((acc, idx) => {
+            console.log(`  ${idx + 1}. ${acc.email}${acc.alias ? ` (${acc.alias})` : ''}`);
+        });
+
         process.exit(0);
     }
-
-    // Initialize Gmail API
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
     // Server implementation
     const server = new Server({
@@ -439,13 +461,45 @@ async function main() {
                 description: "Downloads an email attachment to a specified location",
                 inputSchema: zodToJsonSchema(DownloadAttachmentSchema),
             },
+            {
+                name: "list_accounts",
+                description: "Lists all authenticated Gmail accounts",
+                inputSchema: zodToJsonSchema(ListAccountsSchema),
+            },
+            {
+                name: "switch_account",
+                description: "Switches the active Gmail account",
+                inputSchema: zodToJsonSchema(SwitchAccountSchema),
+            },
+            {
+                name: "get_active_account",
+                description: "Gets the currently active Gmail account",
+                inputSchema: zodToJsonSchema(GetActiveAccountSchema),
+            },
+            {
+                name: "remove_account",
+                description: "Removes a Gmail account and deletes its credentials",
+                inputSchema: zodToJsonSchema(RemoveAccountSchema),
+            },
+            {
+                name: "set_account_alias",
+                description: "Sets or updates an alias for a Gmail account",
+                inputSchema: zodToJsonSchema(SetAccountAliasSchema),
+            },
         ],
     }))
 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { name, arguments: args } = request.params;
 
+        // Helper function to get Gmail client for specified account
+        async function getGmailForAccount(account?: string) {
+            const client = await accountManager.getClient(account);
+            return google.gmail({ version: 'v1', auth: client });
+        }
+
         async function handleEmailAction(action: "send" | "draft", validatedArgs: any) {
+            const gmail = await getGmailForAccount(validatedArgs.account);
             let message: string;
             
             try {
@@ -608,6 +662,7 @@ async function main() {
 
                 case "read_email": {
                     const validatedArgs = ReadEmailSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
                     const response = await gmail.users.messages.get({
                         userId: 'me',
                         id: validatedArgs.messageId,
@@ -674,6 +729,7 @@ async function main() {
 
                 case "search_emails": {
                     const validatedArgs = SearchEmailsSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
                     const response = await gmail.users.messages.list({
                         userId: 'me',
                         q: validatedArgs.query,
@@ -714,6 +770,7 @@ async function main() {
                 // Updated implementation for the modify_email handler
                 case "modify_email": {
                     const validatedArgs = ModifyEmailSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
                     
                     // Prepare request body
                     const requestBody: any = {};
@@ -748,6 +805,7 @@ async function main() {
 
                 case "delete_email": {
                     const validatedArgs = DeleteEmailSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
                     await gmail.users.messages.delete({
                         userId: 'me',
                         id: validatedArgs.messageId,
@@ -764,6 +822,8 @@ async function main() {
                 }
 
                 case "list_email_labels": {
+                    const validatedArgs = ListEmailLabelsSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
                     const labelResults = await listLabels(gmail);
                     const systemLabels = labelResults.system;
                     const userLabels = labelResults.user;
@@ -784,6 +844,7 @@ async function main() {
 
                 case "batch_modify_emails": {
                     const validatedArgs = BatchModifyEmailsSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
                     const messageIds = validatedArgs.messageIds;
                     const batchSize = validatedArgs.batchSize || 50;
                     
@@ -842,6 +903,7 @@ async function main() {
 
                 case "batch_delete_emails": {
                     const validatedArgs = BatchDeleteEmailsSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
                     const messageIds = validatedArgs.messageIds;
                     const batchSize = validatedArgs.batchSize || 50;
 
@@ -889,6 +951,7 @@ async function main() {
                 // New label management handlers
                 case "create_label": {
                     const validatedArgs = CreateLabelSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
                     const result = await createLabel(gmail, validatedArgs.name, {
                         messageListVisibility: validatedArgs.messageListVisibility,
                         labelListVisibility: validatedArgs.labelListVisibility,
@@ -906,13 +969,14 @@ async function main() {
 
                 case "update_label": {
                     const validatedArgs = UpdateLabelSchema.parse(args);
-                    
+                    const gmail = await getGmailForAccount(validatedArgs.account);
+
                     // Prepare request body with only the fields that were provided
                     const updates: any = {};
                     if (validatedArgs.name) updates.name = validatedArgs.name;
                     if (validatedArgs.messageListVisibility) updates.messageListVisibility = validatedArgs.messageListVisibility;
                     if (validatedArgs.labelListVisibility) updates.labelListVisibility = validatedArgs.labelListVisibility;
-                    
+
                     const result = await updateLabel(gmail, validatedArgs.id, updates);
 
                     return {
@@ -927,6 +991,7 @@ async function main() {
 
                 case "delete_label": {
                     const validatedArgs = DeleteLabelSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
                     const result = await deleteLabel(gmail, validatedArgs.id);
 
                     return {
@@ -941,6 +1006,7 @@ async function main() {
 
                 case "get_or_create_label": {
                     const validatedArgs = GetOrCreateLabelSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
                     const result = await getOrCreateLabel(gmail, validatedArgs.name, {
                         messageListVisibility: validatedArgs.messageListVisibility,
                         labelListVisibility: validatedArgs.labelListVisibility,
@@ -962,6 +1028,7 @@ async function main() {
                 // Filter management handlers
                 case "create_filter": {
                     const validatedArgs = CreateFilterSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
                     const result = await createFilter(gmail, validatedArgs.criteria, validatedArgs.action);
 
                     // Format criteria for display
@@ -987,6 +1054,8 @@ async function main() {
                 }
 
                 case "list_filters": {
+                    const validatedArgs = ListFiltersSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
                     const result = await listFilters(gmail);
                     const filters = result.filters;
 
@@ -1027,6 +1096,7 @@ async function main() {
 
                 case "get_filter": {
                     const validatedArgs = GetFilterSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
                     const result = await getFilter(gmail, validatedArgs.filterId);
 
                     const criteriaText = Object.entries(result.criteria || {})
@@ -1051,6 +1121,7 @@ async function main() {
 
                 case "delete_filter": {
                     const validatedArgs = DeleteFilterSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
                     const result = await deleteFilter(gmail, validatedArgs.filterId);
 
                     return {
@@ -1065,6 +1136,7 @@ async function main() {
 
                 case "create_filter_from_template": {
                     const validatedArgs = CreateFilterFromTemplateSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
                     const template = validatedArgs.template;
                     const params = validatedArgs.parameters;
 
@@ -1111,7 +1183,8 @@ async function main() {
                 }
                 case "download_attachment": {
                     const validatedArgs = DownloadAttachmentSchema.parse(args);
-                    
+                    const gmail = await getGmailForAccount(validatedArgs.account);
+
                     try {
                         // Get the attachment data from Gmail API
                         const attachmentResponse = await gmail.users.messages.attachments.get({
@@ -1184,6 +1257,128 @@ async function main() {
                             ],
                         };
                     }
+                }
+
+                // Account management handlers
+                case "list_accounts": {
+                    const accounts = accountManager.listAccounts();
+                    const activeAccount = await accountManager.getActiveAccount();
+
+                    if (accounts.length === 0) {
+                        return {
+                            content: [
+                                {
+                                    type: "text",
+                                    text: "No accounts authenticated. Use CLI command 'npm start auth [alias]' to add an account.",
+                                },
+                            ],
+                        };
+                    }
+
+                    const accountsText = accounts.map((acc) => {
+                        const isActive = acc.email === activeAccount ? ' [ACTIVE]' : '';
+                        const alias = acc.alias ? ` (alias: ${acc.alias})` : '';
+                        const lastUsed = acc.lastUsed.toLocaleString();
+                        return `• ${acc.email}${alias}${isActive}\n  Last used: ${lastUsed}`;
+                    }).join('\n\n');
+
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: `Authenticated accounts (${accounts.length}):\n\n${accountsText}`,
+                            },
+                        ],
+                    };
+                }
+
+                case "switch_account": {
+                    const validatedArgs = SwitchAccountSchema.parse(args);
+                    await accountManager.setActiveAccount(validatedArgs.account);
+
+                    const accountInfo = accountManager.getAccountInfo(validatedArgs.account);
+
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: `Switched to account: ${accountInfo?.email}${accountInfo?.alias ? ` (${accountInfo.alias})` : ''}`,
+                            },
+                        ],
+                    };
+                }
+
+                case "get_active_account": {
+                    const activeAccount = await accountManager.getActiveAccount();
+
+                    if (!activeAccount) {
+                        const accounts = accountManager.listAccounts();
+                        if (accounts.length === 0) {
+                            return {
+                                content: [
+                                    {
+                                        type: "text",
+                                        text: "No accounts authenticated. Use CLI command 'npm start auth [alias]' to add an account.",
+                                    },
+                                ],
+                            };
+                        }
+                        return {
+                            content: [
+                                {
+                                    type: "text",
+                                    text: `No active account. Use switch_account to activate one of: ${accounts.map(a => a.alias || a.email).join(', ')}`,
+                                },
+                            ],
+                        };
+                    }
+
+                    const accountInfo = accountManager.getAccountInfo(activeAccount);
+
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: `Active account: ${accountInfo?.email}${accountInfo?.alias ? ` (${accountInfo.alias})` : ''}`,
+                            },
+                        ],
+                    };
+                }
+
+                case "remove_account": {
+                    const validatedArgs = RemoveAccountSchema.parse(args);
+                    const accountInfo = accountManager.getAccountInfo(validatedArgs.account);
+
+                    if (!accountInfo) {
+                        throw new Error(`Account not found: ${validatedArgs.account}`);
+                    }
+
+                    await accountManager.removeAccount(validatedArgs.account);
+
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: `Account removed: ${accountInfo.email}${accountInfo.alias ? ` (${accountInfo.alias})` : ''}`,
+                            },
+                        ],
+                    };
+                }
+
+                case "set_account_alias": {
+                    const validatedArgs = SetAccountAliasSchema.parse(args);
+                    await accountManager.setAlias(validatedArgs.account, validatedArgs.alias);
+
+                    const accountInfo = accountManager.getAccountInfo(validatedArgs.alias);
+
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: `Alias set: ${accountInfo?.email} → ${validatedArgs.alias}`,
+                            },
+                        ],
+                    };
                 }
 
                 default:

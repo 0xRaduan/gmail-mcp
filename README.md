@@ -8,7 +8,10 @@ A Model Context Protocol (MCP) server for Gmail integration in Claude Desktop wi
 
 ## Features
 
+- **Multi-account support** - manage multiple Gmail accounts simultaneously with easy switching
+- **Account aliases** - nickname your accounts for easier reference (e.g., 'work', 'personal')
 - Send emails with subject, content, **attachments**, and recipients
+- **Send from verified aliases** - send emails from any verified send-as address
 - **Full attachment support** - send and receive file attachments
 - **Download email attachments** to local filesystem
 - Support for HTML emails and multipart messages with both HTML and plain text versions
@@ -17,6 +20,7 @@ A Model Context Protocol (MCP) server for Gmail integration in Claude Desktop wi
 - **Enhanced attachment display** showing filenames, types, sizes, and download IDs
 - Search emails with various criteria (subject, sender, date range)
 - **Comprehensive label management with ability to create, update, delete and list labels**
+- **Advanced filter management** - create, list, update, and delete Gmail filters programmatically
 - List all available Gmail labels (system and user-defined)
 - List emails in inbox, sent, or custom labels
 - Mark emails as read/unread
@@ -57,22 +61,24 @@ npx -y @smithery/cli install @gongrzhe/server-gmail-autoauth-mcp --client claude
 
 2. Run Authentication:
 
-   You can authenticate in two ways:
+   **Multi-Account Support**: You can authenticate multiple Gmail accounts and switch between them.
 
-   a. Global Authentication (Recommended):
+   a. Authenticate your first account:
    ```bash
    # First time: Place gcp-oauth.keys.json in your home directory's .gmail-mcp folder
    mkdir -p ~/.gmail-mcp
    mv gcp-oauth.keys.json ~/.gmail-mcp/
 
-   # Run authentication from anywhere
-   npx @gongrzhe/server-gmail-autoauth-mcp auth
+   # Authenticate with optional alias
+   npx @gongrzhe/server-gmail-autoauth-mcp auth personal
    ```
 
-   b. Local Authentication:
+   b. Authenticate additional accounts:
    ```bash
-   # Place gcp-oauth.keys.json in your current directory
-   # The file will be automatically copied to global config
+   # Authenticate work account with alias
+   npx @gongrzhe/server-gmail-autoauth-mcp auth work
+
+   # Or without alias (can add alias later)
    npx @gongrzhe/server-gmail-autoauth-mcp auth
    ```
 
@@ -80,10 +86,13 @@ npx -y @smithery/cli install @gongrzhe/server-gmail-autoauth-mcp --client claude
    - Look for `gcp-oauth.keys.json` in the current directory or `~/.gmail-mcp/`
    - If found in current directory, copy it to `~/.gmail-mcp/`
    - Open your default browser for Google authentication
-   - Save credentials as `~/.gmail-mcp/credentials.json`
+   - Save account credentials in `~/.gmail-mcp/accounts/<email>.json`
+   - Register the account with optional alias in the account registry
+   - Set as active account if it's the first/only account
 
-   > **Note**: 
-   > - After successful authentication, credentials are stored globally in `~/.gmail-mcp/` and can be used from any directory
+   > **Note**:
+   > - Each account is stored separately in `~/.gmail-mcp/accounts/`
+   > - The first authenticated account becomes the active account automatically
    > - Both Desktop app and Web application credentials are supported
    > - For Web application credentials, make sure to add `http://localhost:3000/oauth2callback` to your authorized redirect URIs
 
@@ -179,9 +188,97 @@ npx @gongrzhe/server-gmail-autoauth-mcp auth https://gmail.gongrzhe.com/oauth2ca
 
 This approach allows authentication flows to work properly in environments where localhost isn't accessible, such as containerized applications or cloud servers.
 
+## Multi-Account Management
+
+This server supports managing multiple Gmail accounts simultaneously. You can authenticate multiple accounts, switch between them, and perform operations on specific accounts.
+
+### Account Management Tools
+
+#### List Accounts (`list_accounts`)
+Lists all authenticated Gmail accounts with their aliases and last used timestamps.
+
+```json
+{}
+```
+
+Example output:
+```
+Authenticated accounts (2):
+
+• personal@gmail.com (alias: personal) [ACTIVE]
+  Last used: 1/15/2025, 10:30:00 AM
+
+• work@company.com (alias: work)
+  Last used: 1/14/2025, 3:45:00 PM
+```
+
+#### Switch Account (`switch_account`)
+Switches the active account. All subsequent operations will use this account by default.
+
+```json
+{
+  "account": "work"  // Can use email or alias
+}
+```
+
+#### Get Active Account (`get_active_account`)
+Shows which account is currently active.
+
+```json
+{}
+```
+
+#### Remove Account (`remove_account`)
+Removes an account and deletes its credentials.
+
+```json
+{
+  "account": "old@gmail.com"  // Can use email or alias
+}
+```
+
+#### Set Account Alias (`set_account_alias`)
+Sets or updates an alias for an account.
+
+```json
+{
+  "account": "personal@gmail.com",
+  "alias": "personal"
+}
+```
+
+### Using Accounts in Operations
+
+All email, label, and filter tools support an optional `account` parameter. If not specified, the active account is used.
+
+**Example - Send email from specific account:**
+```json
+{
+  "account": "work",
+  "to": ["colleague@company.com"],
+  "subject": "Project Update",
+  "body": "Here's the latest update..."
+}
+```
+
+**Example - Read email from personal account:**
+```json
+{
+  "account": "personal",
+  "messageId": "abc123..."
+}
+```
+
+**Workflow:** You can either:
+1. Switch the active account and then perform operations (implicit account)
+2. Specify the account parameter in each operation (explicit account)
+3. Mix both approaches as needed
+
 ## Available Tools
 
-The server provides the following tools that can be used through Claude Desktop:
+The server provides the following tools that can be used through Claude Desktop.
+
+> **Note**: All tools below support an optional `account` parameter to specify which account to use. If omitted, the active account is used.
 
 ### 1. Send Email (`send_email`)
 
