@@ -5,6 +5,7 @@
 
 import { ImapFlow, FetchMessageObject } from 'imapflow';
 import { simpleParser, ParsedMail, AddressObject, Attachment } from 'mailparser';
+import TurndownService from 'turndown';
 import {
   AccountCredentials,
   ICLOUD_CONFIG,
@@ -20,9 +21,14 @@ export class ImapClient {
   private client: ImapFlow | null = null;
   private credentials: AccountCredentials;
   private currentMailbox: string | null = null;
+  private turndown: TurndownService;
 
   constructor(credentials: AccountCredentials) {
     this.credentials = credentials;
+    this.turndown = new TurndownService({
+      headingStyle: 'atx',
+      codeBlockStyle: 'fenced',
+    });
   }
 
   /**
@@ -260,9 +266,15 @@ export class ImapClient {
     // Parse the message using mailparser
     const parsed: ParsedMail = await simpleParser(message.source) as ParsedMail;
 
-    // TODO: Consider converting large HTML bodies to a concise markdown/text
-    // representation before returning, to reduce MCP response size for
-    // marketing-style emails with heavyweight templates.
+    // Convert HTML to markdown to keep responses compact. Also avoid returning huge HTML blobs.
+    const MAX_MARKDOWN_CHARS = 4000;
+    const { markdown } = parsed.html
+      ? this.htmlToMarkdown(parsed.html, MAX_MARKDOWN_CHARS)
+      : { markdown: undefined };
+
+    // Include HTML only if it is reasonably small; otherwise omit to save tokens.
+    const MAX_HTML_CHARS = 5000;
+    const html = parsed.html && parsed.html.length <= MAX_HTML_CHARS ? parsed.html : undefined;
 
     return {
       uid: message.uid.toString(),
@@ -274,7 +286,8 @@ export class ImapClient {
       date: parsed.date || new Date(),
       body: {
         text: parsed.text,
-        html: parsed.html || undefined,
+        html,
+        markdown,
       },
       attachments: this.parseAttachments(parsed, message.bodyStructure),
       flags: message.flags ? Array.from(message.flags) : [],
@@ -322,7 +335,14 @@ export class ImapClient {
 
     if (message.source) {
       const parsed: ParsedMail = (await simpleParser(message.source)) as ParsedMail;
-      const text = parsed.text || parsed.html;
+      let text = parsed.text;
+
+      if (!text && parsed.html) {
+        // Prefer markdown for snippet to avoid bloated HTML
+        const { markdown } = this.htmlToMarkdown(parsed.html, maxBodyChars * 2);
+        text = markdown || parsed.html;
+      }
+
       if (text) {
         snippet = text.replace(/\s+/g, ' ').slice(0, maxBodyChars);
       }
@@ -575,6 +595,20 @@ export class ImapClient {
     }
 
     return attachments;
+  }
+
+  /**
+   * Convert HTML to markdown with length capping to avoid huge payloads
+   */
+  private htmlToMarkdown(html: string, maxLength: number): { markdown?: string; truncated: boolean } {
+    if (!html) return { markdown: undefined, truncated: false };
+
+    const markdown = this.turndown.turndown(html);
+    if (markdown.length > maxLength) {
+      return { markdown: markdown.slice(0, maxLength), truncated: true };
+    }
+
+    return { markdown, truncated: false };
   }
 
   /**

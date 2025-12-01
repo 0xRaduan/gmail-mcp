@@ -60,6 +60,7 @@ export interface EmailMessage {
   body: {
     text?: string;
     html?: string;
+    markdown?: string;
   };
   attachments: EmailAttachment[];
   flags: string[];
