@@ -262,6 +262,20 @@ const BatchDeleteEmailsSchema = AccountBaseSchema.extend({
     batchSize: z.number().optional().default(50).describe("Number of messages to process in each batch (default: 50)"),
 });
 
+// Thread-level operation schemas
+const ModifyThreadSchema = AccountBaseSchema.extend({
+    threadId: z.string().describe("ID of the thread to modify"),
+    addLabelIds: z.array(z.string()).optional().describe("List of label IDs to add to the thread"),
+    removeLabelIds: z.array(z.string()).optional().describe("List of label IDs to remove from the thread"),
+});
+
+const BatchModifyThreadsSchema = AccountBaseSchema.extend({
+    threadIds: z.array(z.string()).describe("List of thread IDs to modify"),
+    addLabelIds: z.array(z.string()).optional().describe("List of label IDs to add to all threads"),
+    removeLabelIds: z.array(z.string()).optional().describe("List of label IDs to remove from all threads"),
+    batchSize: z.number().optional().default(50).describe("Number of threads to process in each batch (default: 50)"),
+});
+
 // Filter management schemas
 const CreateFilterSchema = AccountBaseSchema.extend({
     criteria: z.object({
@@ -410,6 +424,16 @@ async function main() {
                 name: "batch_delete_emails",
                 description: "Permanently deletes multiple emails in batches",
                 inputSchema: zodToJsonSchema(BatchDeleteEmailsSchema),
+            },
+            {
+                name: "modify_thread",
+                description: "Modifies labels for an entire email thread (conversation)",
+                inputSchema: zodToJsonSchema(ModifyThreadSchema),
+            },
+            {
+                name: "batch_modify_threads",
+                description: "Modifies labels for multiple email threads in batches",
+                inputSchema: zodToJsonSchema(BatchModifyThreadsSchema),
             },
             {
                 name: "create_label",
@@ -935,6 +959,102 @@ async function main() {
                     if (failureCount > 0) {
                         resultText += `Failed to delete: ${failureCount} messages\n\n`;
                         resultText += `Failed message IDs:\n`;
+                        resultText += failures.map(f => `- ${(f.item as string).substring(0, 16)}... (${f.error.message})`).join('\n');
+                    }
+
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: resultText,
+                            },
+                        ],
+                    };
+                }
+
+                // Thread-level operation handlers
+                case "modify_thread": {
+                    const validatedArgs = ModifyThreadSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
+
+                    // Prepare request body
+                    const requestBody: any = {};
+
+                    if (validatedArgs.addLabelIds) {
+                        requestBody.addLabelIds = validatedArgs.addLabelIds;
+                    }
+
+                    if (validatedArgs.removeLabelIds) {
+                        requestBody.removeLabelIds = validatedArgs.removeLabelIds;
+                    }
+
+                    // Use Gmail's threads.modify API
+                    const result = await gmail.users.threads.modify({
+                        userId: 'me',
+                        id: validatedArgs.threadId,
+                        requestBody: requestBody,
+                    });
+
+                    // Get message count in thread for feedback
+                    const messageCount = result.data.messages?.length || 0;
+
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: `Thread ${validatedArgs.threadId} modified successfully (${messageCount} messages in thread)`,
+                            },
+                        ],
+                    };
+                }
+
+                case "batch_modify_threads": {
+                    const validatedArgs = BatchModifyThreadsSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
+                    const threadIds = validatedArgs.threadIds;
+                    const batchSize = validatedArgs.batchSize || 50;
+
+                    // Prepare request body
+                    const requestBody: any = {};
+
+                    if (validatedArgs.addLabelIds) {
+                        requestBody.addLabelIds = validatedArgs.addLabelIds;
+                    }
+
+                    if (validatedArgs.removeLabelIds) {
+                        requestBody.removeLabelIds = validatedArgs.removeLabelIds;
+                    }
+
+                    // Process threads in batches
+                    const { successes, failures } = await processBatches(
+                        threadIds,
+                        batchSize,
+                        async (batch) => {
+                            const results = await Promise.all(
+                                batch.map(async (threadId) => {
+                                    const result = await gmail.users.threads.modify({
+                                        userId: 'me',
+                                        id: threadId,
+                                        requestBody: requestBody,
+                                    });
+                                    return { threadId, messageCount: result.data.messages?.length || 0 };
+                                })
+                            );
+                            return results;
+                        }
+                    );
+
+                    // Generate summary of the operation
+                    const successCount = successes.length;
+                    const failureCount = failures.length;
+                    const totalMessages = successes.reduce((sum, s) => sum + (s as any).messageCount, 0);
+
+                    let resultText = `Batch thread modification complete.\n`;
+                    resultText += `Successfully processed: ${successCount} threads (${totalMessages} total messages)\n`;
+
+                    if (failureCount > 0) {
+                        resultText += `Failed to process: ${failureCount} threads\n\n`;
+                        resultText += `Failed thread IDs:\n`;
                         resultText += failures.map(f => `- ${(f.item as string).substring(0, 16)}... (${f.error.message})`).join('\n');
                     }
 
