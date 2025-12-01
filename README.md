@@ -1,5 +1,7 @@
 # Gmail AutoAuth MCP Server
 
+Note: originally forked from https://github.com/GongRzhe/Gmail-MCP-Server
+
 A Model Context Protocol (MCP) server for Gmail integration in Claude Desktop with auto authentication support. This server enables AI assistants to manage Gmail through natural language interactions.
 
 ![](https://badge.mcpx.dev?type=server 'MCP Server')
