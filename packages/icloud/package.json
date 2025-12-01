@@ -1,0 +1,49 @@
+{
+  "name": "@anthropic/icloud-mcp",
+  "version": "1.0.0",
+  "description": "iCloud Mail MCP server with multi-account support",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "icloud-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "auth": "node dist/index.js auth",
+    "prepublishOnly": "npm run build"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "icloud",
+    "mail",
+    "mcp",
+    "imap",
+    "model-context-protocol",
+    "apple",
+    "claude"
+  ],
+  "author": "Raduan Al-Shedivat",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.4.0",
+    "imapflow": "^1.0.171",
+    "mailparser": "^3.7.2",
+    "nodemailer": "^7.0.3",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.4.6",
+    "@types/node": "^20.10.5",
+    "typescript": "^5.3.3"
+  }
+}
