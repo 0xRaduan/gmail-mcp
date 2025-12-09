@@ -8,7 +8,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { google } from 'googleapis';
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import * as schemas from "./schemas.js";
 import { OAuth2Client } from 'google-auth-library';
 import fs from 'fs';
 import path from 'path';
@@ -263,6 +263,12 @@ const BatchDeleteEmailsSchema = AccountBaseSchema.extend({
 });
 
 // Thread-level operation schemas
+const ReadThreadSchema = AccountBaseSchema.extend({
+    threadId: z.string().describe("ID of the thread to read"),
+    maxMessages: z.number().optional().describe("Maximum number of messages to return (default: all)"),
+    offset: z.number().optional().describe("Number of messages to skip from the start (default: 0)"),
+});
+
 const ModifyThreadSchema = AccountBaseSchema.extend({
     threadId: z.string().describe("ID of the thread to modify"),
     addLabelIds: z.array(z.string()).optional().describe("List of label IDs to add to the thread"),
@@ -383,132 +389,137 @@ async function main() {
             {
                 name: "send_email",
                 description: "Sends a new email",
-                inputSchema: zodToJsonSchema(SendEmailSchema),
+                inputSchema: schemas.SendEmailSchema,
             },
             {
                 name: "draft_email",
                 description: "Draft a new email",
-                inputSchema: zodToJsonSchema(SendEmailSchema),
+                inputSchema: schemas.SendEmailSchema,
             },
             {
                 name: "read_email",
                 description: "Retrieves the content of a specific email",
-                inputSchema: zodToJsonSchema(ReadEmailSchema),
+                inputSchema: schemas.ReadEmailSchema,
             },
             {
                 name: "search_emails",
                 description: "Searches for emails using Gmail search syntax",
-                inputSchema: zodToJsonSchema(SearchEmailsSchema),
+                inputSchema: schemas.SearchEmailsSchema,
             },
             {
                 name: "modify_email",
                 description: "Modifies email labels (move to different folders)",
-                inputSchema: zodToJsonSchema(ModifyEmailSchema),
+                inputSchema: schemas.ModifyEmailSchema,
             },
             {
                 name: "delete_email",
                 description: "Permanently deletes an email",
-                inputSchema: zodToJsonSchema(DeleteEmailSchema),
+                inputSchema: schemas.DeleteEmailSchema,
             },
             {
                 name: "list_email_labels",
                 description: "Retrieves all available Gmail labels",
-                inputSchema: zodToJsonSchema(ListEmailLabelsSchema),
+                inputSchema: schemas.ListEmailLabelsSchema,
             },
             {
                 name: "batch_modify_emails",
                 description: "Modifies labels for multiple emails in batches",
-                inputSchema: zodToJsonSchema(BatchModifyEmailsSchema),
+                inputSchema: schemas.BatchModifyEmailsSchema,
             },
             {
                 name: "batch_delete_emails",
                 description: "Permanently deletes multiple emails in batches",
-                inputSchema: zodToJsonSchema(BatchDeleteEmailsSchema),
+                inputSchema: schemas.BatchDeleteEmailsSchema,
+            },
+            {
+                name: "read_thread",
+                description: "Retrieves all messages in an email thread (conversation)",
+                inputSchema: schemas.ReadThreadSchema,
             },
             {
                 name: "modify_thread",
                 description: "Modifies labels for an entire email thread (conversation)",
-                inputSchema: zodToJsonSchema(ModifyThreadSchema),
+                inputSchema: schemas.ModifyThreadSchema,
             },
             {
                 name: "batch_modify_threads",
                 description: "Modifies labels for multiple email threads in batches",
-                inputSchema: zodToJsonSchema(BatchModifyThreadsSchema),
+                inputSchema: schemas.BatchModifyThreadsSchema,
             },
             {
                 name: "create_label",
                 description: "Creates a new Gmail label",
-                inputSchema: zodToJsonSchema(CreateLabelSchema),
+                inputSchema: schemas.CreateLabelSchema,
             },
             {
                 name: "update_label",
                 description: "Updates an existing Gmail label",
-                inputSchema: zodToJsonSchema(UpdateLabelSchema),
+                inputSchema: schemas.UpdateLabelSchema,
             },
             {
                 name: "delete_label",
                 description: "Deletes a Gmail label",
-                inputSchema: zodToJsonSchema(DeleteLabelSchema),
+                inputSchema: schemas.DeleteLabelSchema,
             },
             {
                 name: "get_or_create_label",
                 description: "Gets an existing label by name or creates it if it doesn't exist",
-                inputSchema: zodToJsonSchema(GetOrCreateLabelSchema),
+                inputSchema: schemas.GetOrCreateLabelSchema,
             },
             {
                 name: "create_filter",
                 description: "Creates a new Gmail filter with custom criteria and actions",
-                inputSchema: zodToJsonSchema(CreateFilterSchema),
+                inputSchema: schemas.CreateFilterSchema,
             },
             {
                 name: "list_filters",
                 description: "Retrieves all Gmail filters",
-                inputSchema: zodToJsonSchema(ListFiltersSchema),
+                inputSchema: schemas.ListFiltersSchema,
             },
             {
                 name: "get_filter",
                 description: "Gets details of a specific Gmail filter",
-                inputSchema: zodToJsonSchema(GetFilterSchema),
+                inputSchema: schemas.GetFilterSchema,
             },
             {
                 name: "delete_filter",
                 description: "Deletes a Gmail filter",
-                inputSchema: zodToJsonSchema(DeleteFilterSchema),
+                inputSchema: schemas.DeleteFilterSchema,
             },
             {
                 name: "create_filter_from_template",
                 description: "Creates a filter using a pre-defined template for common scenarios",
-                inputSchema: zodToJsonSchema(CreateFilterFromTemplateSchema),
+                inputSchema: schemas.CreateFilterFromTemplateSchema,
             },
             {
                 name: "download_attachment",
                 description: "Downloads an email attachment to a specified location",
-                inputSchema: zodToJsonSchema(DownloadAttachmentSchema),
+                inputSchema: schemas.DownloadAttachmentSchema,
             },
             {
                 name: "list_accounts",
                 description: "Lists all authenticated Gmail accounts",
-                inputSchema: zodToJsonSchema(ListAccountsSchema),
+                inputSchema: schemas.ListAccountsSchema,
             },
             {
                 name: "switch_account",
                 description: "Switches the active Gmail account",
-                inputSchema: zodToJsonSchema(SwitchAccountSchema),
+                inputSchema: schemas.SwitchAccountSchema,
             },
             {
                 name: "get_active_account",
                 description: "Gets the currently active Gmail account",
-                inputSchema: zodToJsonSchema(GetActiveAccountSchema),
+                inputSchema: schemas.GetActiveAccountSchema,
             },
             {
                 name: "remove_account",
                 description: "Removes a Gmail account and deletes its credentials",
-                inputSchema: zodToJsonSchema(RemoveAccountSchema),
+                inputSchema: schemas.RemoveAccountSchema,
             },
             {
                 name: "set_account_alias",
                 description: "Sets or updates an alias for a Gmail account",
-                inputSchema: zodToJsonSchema(SetAccountAliasSchema),
+                inputSchema: schemas.SetAccountAliasSchema,
             },
         ],
     }))
@@ -973,6 +984,93 @@ async function main() {
                 }
 
                 // Thread-level operation handlers
+                case "read_thread": {
+                    const validatedArgs = ReadThreadSchema.parse(args);
+                    const gmail = await getGmailForAccount(validatedArgs.account);
+
+                    // Fetch full thread
+                    const response = await gmail.users.threads.get({
+                        userId: 'me',
+                        id: validatedArgs.threadId,
+                        format: 'full',
+                    });
+
+                    const allMessages = response.data.messages || [];
+                    const totalMessages = allMessages.length;
+
+                    // Apply pagination
+                    const offset = validatedArgs.offset || 0;
+                    const maxMessages = validatedArgs.maxMessages;
+                    const messages = maxMessages
+                        ? allMessages.slice(offset, offset + maxMessages)
+                        : allMessages.slice(offset);
+
+                    // Get thread subject from first message
+                    const firstMessageHeaders = allMessages[0]?.payload?.headers || [];
+                    const threadSubject = firstMessageHeaders.find(h => h.name?.toLowerCase() === 'subject')?.value || '(no subject)';
+
+                    // Build pagination info
+                    const startIdx = offset + 1;
+                    const endIdx = offset + messages.length;
+                    const showingInfo = totalMessages > messages.length
+                        ? `Showing: ${startIdx}-${endIdx} of ${totalMessages} (use offset/maxMessages to see more)`
+                        : `Showing: all ${totalMessages} messages`;
+
+                    // Format each message
+                    const formattedMessages = messages.map((msg, idx) => {
+                        const headers = msg.payload?.headers || [];
+                        const from = headers.find(h => h.name?.toLowerCase() === 'from')?.value || '';
+                        const to = headers.find(h => h.name?.toLowerCase() === 'to')?.value || '';
+                        const date = headers.find(h => h.name?.toLowerCase() === 'date')?.value || '';
+                        const messageId = headers.find(h => h.name?.toLowerCase() === 'message-id')?.value || '';
+
+                        // Extract content
+                        const { text, html } = extractEmailContent(msg.payload as GmailMessagePart || {});
+                        let body = text || html || '';
+                        const contentTypeNote = !text && html
+                            ? '[Note: HTML-formatted email]\n\n'
+                            : '';
+
+                        // Get attachments
+                        const attachments: EmailAttachment[] = [];
+                        const processAttachmentParts = (part: GmailMessagePart) => {
+                            if (part.body && part.body.attachmentId) {
+                                attachments.push({
+                                    id: part.body.attachmentId,
+                                    filename: part.filename || `attachment-${part.body.attachmentId}`,
+                                    mimeType: part.mimeType || 'application/octet-stream',
+                                    size: part.body.size || 0
+                                });
+                            }
+                            if (part.parts) {
+                                part.parts.forEach(subpart => processAttachmentParts(subpart));
+                            }
+                        };
+                        if (msg.payload) {
+                            processAttachmentParts(msg.payload as GmailMessagePart);
+                        }
+
+                        const attachmentInfo = attachments.length > 0
+                            ? `\n\nAttachments (${attachments.length}):\n` +
+                              attachments.map(a => `- ${a.filename} (${a.mimeType}, ${Math.round(a.size/1024)} KB, ID: ${a.id})`).join('\n')
+                            : '';
+
+                        const messageNum = offset + idx + 1;
+                        return `--- Message ${messageNum} of ${totalMessages} ---\nMessage ID: ${msg.id}\nFrom: ${from}\nTo: ${to}\nDate: ${date}\nMessage-ID: ${messageId}\n\n${contentTypeNote}${body}${attachmentInfo}`;
+                    });
+
+                    const output = `Thread ID: ${validatedArgs.threadId}\nSubject: ${threadSubject}\nTotal Messages: ${totalMessages}\n${showingInfo}\n\n${formattedMessages.join('\n\n')}`;
+
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: output,
+                            },
+                        ],
+                    };
+                }
+
                 case "modify_thread": {
                     const validatedArgs = ModifyThreadSchema.parse(args);
                     const gmail = await getGmailForAccount(validatedArgs.account);
@@ -1512,6 +1610,7 @@ async function main() {
                         text: `Error: ${error.message}`,
                     },
                 ],
+                isError: true,
             };
         }
     });
