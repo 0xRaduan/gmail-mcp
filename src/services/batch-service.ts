@@ -146,7 +146,6 @@ export class BatchService extends GmailService {
         }
 
         const gmail = await this.getGmail(options.account);
-        let totalMessages = 0;
 
         const { successes, failures } = await this.processBatches(
             threadIds,
@@ -163,12 +162,17 @@ export class BatchService extends GmailService {
                             },
                         });
                         const messageCount = result.data.messages?.length || 0;
-                        totalMessages += messageCount;
                         return { item: threadId, messageCount };
                     })
                 );
                 return results;
             }
+        );
+
+        // Derive totalMessages from successes to avoid double-counting on retries
+        const totalMessages = successes.reduce(
+            (sum, s) => sum + ((s as any).messageCount || 0),
+            0
         );
 
         return {
