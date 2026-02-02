@@ -1,12 +1,54 @@
-# Gmail AutoAuth MCP Server
+# Gmail MCP Server & CLI
 
 Note: originally forked from https://github.com/GongRzhe/Gmail-MCP-Server
 
-A Model Context Protocol (MCP) server for Gmail integration in Claude Desktop with auto authentication support. This server enables AI assistants to manage Gmail through natural language interactions.
+A **dual-interface Gmail tool** providing both:
+- **MCP Server** - For AI assistants (Claude Code, Cursor, etc.)
+- **CLI** - For terminal usage and shell automations
 
 ![](https://badge.mcpx.dev?type=server 'MCP Server')
 [![smithery badge](https://smithery.ai/badge/@gongrzhe/server-gmail-autoauth-mcp)](https://smithery.ai/server/@gongrzhe/server-gmail-autoauth-mcp)
 
+## CLI Quick Start
+
+```bash
+# Install globally
+npm install -g @thesummarycompany/gmail-mcp
+
+# Authenticate
+gmail account auth personal
+
+# Search emails
+gmail email search --query "is:unread" --max 10
+
+# JSON output for piping
+gmail email search --query "from:linkedin" -f json | jq '.messages[].id'
+
+# Batch archive with dry-run preview
+gmail email search --query "from:linkedin older_than:30d" -f json | \
+  jq -r '.messages[].id' | \
+  gmail batch archive --stdin --dry-run
+
+# Execute when satisfied
+gmail email search --query "from:linkedin older_than:30d" -f json | \
+  jq -r '.messages[].id' | \
+  gmail batch archive --stdin
+```
+
+### CLI Commands
+
+```
+gmail
+├── account     - list, switch, active, remove, alias, auth
+├── email       - search, read, send, draft, modify, delete
+├── batch       - modify-emails, delete-emails, archive, trash, mark-read, star
+├── thread      - read, modify
+├── label       - list, create, update, delete, get-or-create
+├── filter      - list, get, create, delete, template
+└── attachment  - download
+```
+
+Global options: `-a/--account`, `-f/--format` (human|json), `--dry-run`, `--quiet`
 
 ## Features
 
@@ -71,17 +113,20 @@ npx -y @smithery/cli install @gongrzhe/server-gmail-autoauth-mcp --client claude
    mkdir -p ~/.gmail-mcp
    mv gcp-oauth.keys.json ~/.gmail-mcp/
 
-   # Authenticate with optional alias
-   npx @gongrzhe/server-gmail-autoauth-mcp auth personal
+   # Authenticate with optional alias (using CLI)
+   gmail account auth personal
+
+   # Or using npx
+   npx @thesummarycompany/gmail-mcp auth personal
    ```
 
    b. Authenticate additional accounts:
    ```bash
    # Authenticate work account with alias
-   npx @gongrzhe/server-gmail-autoauth-mcp auth work
+   gmail account auth work
 
    # Or without alias (can add alias later)
-   npx @gongrzhe/server-gmail-autoauth-mcp auth
+   gmail account auth
    ```
 
    The authentication process will:
@@ -104,9 +149,20 @@ npx -y @smithery/cli install @gongrzhe/server-gmail-autoauth-mcp --client claude
 {
   "mcpServers": {
     "gmail": {
+      "command": "gmail-mcp"
+    }
+  }
+}
+```
+
+Or using npx:
+```json
+{
+  "mcpServers": {
+    "gmail": {
       "command": "npx",
       "args": [
-        "@gongrzhe/server-gmail-autoauth-mcp"
+        "@thesummarycompany/gmail-mcp"
       ]
     }
   }
