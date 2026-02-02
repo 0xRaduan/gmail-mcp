@@ -24,12 +24,17 @@ export const validateEmail = (email: string): boolean => {
 export function createEmailMessage(validatedArgs: any): string {
     const encodedSubject = encodeEmailHeader(validatedArgs.subject);
     // Determine content type based on available content and explicit mimeType
-    let mimeType = validatedArgs.mimeType || 'text/plain';
-    
-    // If htmlBody is provided and mimeType isn't explicitly set to text/plain,
-    // use multipart/alternative to include both versions
-    if (validatedArgs.htmlBody && mimeType !== 'text/plain') {
+    let mimeType = validatedArgs.mimeType;
+
+    // If htmlBody is provided and no explicit mimeType was set,
+    // use multipart/alternative to include both plain text and HTML versions
+    if (validatedArgs.htmlBody && !mimeType) {
         mimeType = 'multipart/alternative';
+    }
+
+    // Default to text/plain if no mimeType determined
+    if (!mimeType) {
+        mimeType = 'text/plain';
     }
 
     // Generate a random boundary string for multipart messages

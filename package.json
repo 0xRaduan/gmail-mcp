@@ -10,11 +10,11 @@
   },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "cli": "node dist/cli.js",
-    "auth": "node dist/index.js auth",
-    "prepare": "npm run build",
-    "prepublishOnly": "npm run build"
+    "start": "bun dist/index.js",
+    "cli": "bun dist/cli.js",
+    "auth": "bun dist/index.js auth",
+    "prepare": "bun run build",
+    "prepublishOnly": "bun run build"
   },
   "files": [
     "dist",

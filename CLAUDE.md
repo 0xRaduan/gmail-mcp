@@ -133,13 +133,13 @@ Exclude test/eval directories from the main build if they have extra dependencie
 
 Run the MCP server locally:
 ```bash
-npm run build && npm start
+bun run build && bun run start
 ```
 
 Run the CLI:
 ```bash
-npm run cli -- email search --query "test"
-# or after npm link:
+bun run cli -- email search --query "test"
+# or after bun link:
 gmail email search --query "test"
 ```
 
@@ -147,5 +147,5 @@ Authenticate a new account:
 ```bash
 gmail account auth [alias]
 # or:
-npm run auth [alias]
+bun run auth [alias]
 ```
